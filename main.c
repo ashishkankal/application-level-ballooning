@@ -14,13 +14,11 @@ unsigned long nr_signals = 0;
 
 #define __BALLOON_SYS_CALL_ID 442
 
-void sigballoon_handler(){
-	nr_signals++;
-}
+#define SIGBALLOON 40
 
 long register_ballooning(void)
 {
-    signal(40,sigballoon_handler);
+    signal(SIGBALLOON,sigballoon_handler);
     return syscall(__BALLOON_SYS_CALL_ID);
 }
 
@@ -29,17 +27,16 @@ long register_ballooning(void)
  * implement your page replacement policy here
  */
 
-
-/*
- * 			placeholder-2
- * implement your signal handler here
- */
+// Signal Handler
+void sigballoon_handler(){
+	nr_signals++;
+}
 
 int main(int argc, char *argv[])
 {
 	int *ptr, nr_pages;
 
-    	ptr = mmap(NULL, TOTAL_MEMORY_SIZE/2, PROT_READ | PROT_WRITE,
+    	ptr = mmap(NULL, TOTAL_MEMORY_SIZE, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 
 	if (ptr == MAP_FAILED) {
@@ -47,19 +44,14 @@ int main(int argc, char *argv[])
        		exit(1);
 	}
 	buff = ptr;
-	memset(buff, 0, TOTAL_MEMORY_SIZE/2);
+	memset(buff, 0, TOTAL_MEMORY_SIZE);
 	
-	
-	/*
-	 * 		placeholder-1
-	 * register me with the kernel ballooning subsystem
-	 */
-
+	// Register with kernel ballooning subsystem
 	register_ballooning();
 
 	/* test-case */
-	test_case_main(buff, TOTAL_MEMORY_SIZE/2);
+	test_case_main(buff, TOTAL_MEMORY_SIZE);
 
-	munmap(ptr, TOTAL_MEMORY_SIZE/2);
+	munmap(ptr, TOTAL_MEMORY_SIZE);
 	printf("I received SIGBALLOON %lu times\n", nr_signals);
 }
