@@ -16,6 +16,8 @@ unsigned long nr_signals = 0;
 
 #define SIGBALLOON 40
 
+void sigballoon_handler(int);
+
 long register_ballooning(void)
 {
     signal(SIGBALLOON,sigballoon_handler);
@@ -28,7 +30,7 @@ long register_ballooning(void)
  */
 
 // Signal Handler
-void sigballoon_handler(){
+void sigballoon_handler(int sigId){
 	nr_signals++;
 }
 
@@ -36,7 +38,7 @@ int main(int argc, char *argv[])
 {
 	int *ptr, nr_pages;
 
-    	ptr = mmap(NULL, TOTAL_MEMORY_SIZE, PROT_READ | PROT_WRITE,
+    	ptr = mmap(NULL, TOTAL_MEMORY_SIZE/2, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 
 	if (ptr == MAP_FAILED) {
@@ -44,14 +46,14 @@ int main(int argc, char *argv[])
        		exit(1);
 	}
 	buff = ptr;
-	memset(buff, 0, TOTAL_MEMORY_SIZE);
+	memset(buff, 0, TOTAL_MEMORY_SIZE/2);
 	
 	// Register with kernel ballooning subsystem
 	register_ballooning();
 
 	/* test-case */
-	test_case_main(buff, TOTAL_MEMORY_SIZE);
+	test_case_main(buff, TOTAL_MEMORY_SIZE/2);
 
-	munmap(ptr, TOTAL_MEMORY_SIZE);
+	munmap(ptr, TOTAL_MEMORY_SIZE/2);
 	printf("I received SIGBALLOON %lu times\n", nr_signals);
 }
