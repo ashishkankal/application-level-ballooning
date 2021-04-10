@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
 {
 	int *ptr, nr_pages;
 
-    	ptr = mmap(NULL, TOTAL_MEMORY_SIZE/2, PROT_READ | PROT_WRITE,
+    	ptr = mmap(NULL, TOTAL_MEMORY_SIZE, PROT_READ | PROT_WRITE,
 			MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 
 	if (ptr == MAP_FAILED) {
@@ -46,14 +46,14 @@ int main(int argc, char *argv[])
        		exit(1);
 	}
 	buff = ptr;
-	memset(buff, 0, TOTAL_MEMORY_SIZE/2);
+	memset(buff, 0, TOTAL_MEMORY_SIZE);
 	
 	// Register with kernel ballooning subsystem
 	register_ballooning();
 
 	/* test-case */
-	test_case_main(buff, TOTAL_MEMORY_SIZE/2);
+	test_case_main(buff, TOTAL_MEMORY_SIZE);
 
-	munmap(ptr, TOTAL_MEMORY_SIZE/2);
+	munmap(ptr, TOTAL_MEMORY_SIZE);
 	printf("I received SIGBALLOON %lu times\n", nr_signals);
 }
