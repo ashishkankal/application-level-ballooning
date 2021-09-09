@@ -1,0 +1,229 @@
+From 7c1e977ea00310c257852d4f628e3990684b4a95 Mon Sep 17 00:00:00 2001
+From: Ashish <ashish25895@gmail.com>
+Date: Thu, 13 May 2021 18:25:56 +0530
+Subject: [PATCH] os_assignment2
+
+Signed-off-by: Ashish <ashish25895@gmail.com>
+---
+ arch/x86/entry/syscalls/syscall_64.tbl |   4 +-
+ arch/x86/mm/fault.c                    |  19 ++++
+ ballooning/Makefile                    |   2 +
+ ballooning/ballooning.c                | 124 +++++++++++++++++++++++++
+ include/linux/syscalls.h               |   4 +
+ 5 files changed, 152 insertions(+), 1 deletion(-)
+ create mode 100644 ballooning/Makefile
+ create mode 100644 ballooning/ballooning.c
+
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index 78672124d..5d947ca94 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -363,7 +363,9 @@
+ 439	common	faccessat2		sys_faccessat2
+ 440	common	process_madvise		sys_process_madvise
+ 441	common	epoll_pwait2		sys_epoll_pwait2
+-
++442     common  ballooning              sys_ballooning
++443     common  recieve_idle_pages      sys_recieve_idle_pages
++444	common	disable_ballooning	sys_disable_ballooning
+ #
+ # Due to a historical design error, certain syscalls are numbered differently
+ # in x32 as compared to native x86_64.  These syscalls have numbers 512-547.
+diff --git a/arch/x86/mm/fault.c b/arch/x86/mm/fault.c
+index 441c3e9b8..8febbacee 100644
+--- a/arch/x86/mm/fault.c
++++ b/arch/x86/mm/fault.c
+@@ -18,6 +18,8 @@
+ #include <linux/uaccess.h>		/* faulthandler_disabled()	*/
+ #include <linux/efi.h>			/* efi_recover_from_page_fault()*/
+ #include <linux/mm_types.h>
++#include <linux/swap.h>
++//#include <linux/mm.h>
+ 
+ #include <asm/cpufeature.h>		/* boot_cpu_has, ...		*/
+ #include <asm/traps.h>			/* dotraplinkage, ...		*/
+@@ -35,6 +37,9 @@
+ #define CREATE_TRACE_POINTS
+ #include <asm/trace/exceptions.h>
+ 
++void balloon_send_signal(void);
++#define BALLOON_MEM_THRESHOLD 1024*1024
++
+ /*
+  * Returns 0 if mmiotrace is disabled, or if the fault is not
+  * handled by mmiotrace:
+@@ -1397,6 +1402,20 @@ void do_user_addr_fault(struct pt_regs *regs,
+ 	 * userland). The return to userland is identified whenever
+ 	 * FAULT_FLAG_USER|FAULT_FLAG_KILLABLE are both set in flags.
+ 	 */
++	
++        /*
++         *-----APPLICATION BALLOONING CODE------
++	 */
++        //printk("Control comes here \n");
++        //printk("memory available : %lu",si_mem_available());
++       
++        long unsigned int free_mem = si_mem_available()<<(PAGE_SHIFT-10);
++        //printk("mem available nr_pages : %lu",free_mem);
++        if(free_mem < BALLOON_MEM_THRESHOLD){
++	   balloon_send_signal();
++        }
++
++
+ 	fault = handle_mm_fault(vma, address, flags, regs);
+ 
+ 	/* Quick path to respond to signals */
+diff --git a/ballooning/Makefile b/ballooning/Makefile
+new file mode 100644
+index 000000000..44b3f572a
+--- /dev/null
++++ b/ballooning/Makefile
+@@ -0,0 +1,2 @@
++obj-y := ballooning.o
++
+diff --git a/ballooning/ballooning.c b/ballooning/ballooning.c
+new file mode 100644
+index 000000000..03c40f30c
+--- /dev/null
++++ b/ballooning/ballooning.c
+@@ -0,0 +1,124 @@
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/syscalls.h>
++#include <linux/memcontrol.h>
++#include <linux/mm.h>
++#include <linux/page_ref.h>
++#include <linux/sched/signal.h>
++#include <linux/delay.h>
++#include <linux/list.h>
++#define SIGBALLOON 40
++
++/* idlePage struct to recieve the page fn from user space*/
++struct idlePage{
++	unsigned long long pfn;
++	struct idlePage *next;
++};
++
++int signal_sent =0;
++
++struct idlePage *my_idle_pages;
++
++/* Task struct to store the victim process */
++static struct task_struct *victim = NULL;
++
++/* Siginfo to store the signal information */
++static struct kernel_siginfo sign_info;
++
++/* Function invoked on low memory below 1 GB */
++void balloon_send_signal(void){
++    printk("Kernel Needs Memory.");
++    if(victim == NULL){
++   	/*No Process(es) registered for ballooning*/
++        printk("Process not registered for ballooning");
++    }
++    else{
++	/* Send signal to the process */
++     if(signal_sent==0 && send_sig_info(SIGBALLOON, &sign_info, victim)>=0){
++    	printk("Signal sent to the process with PID: %d",victim->pid);
++    	signal_sent=1;
++        ssleep(10);
++     }
++    }
++    
++}
++EXPORT_SYMBOL(balloon_send_signal);
++
++
++SYSCALL_DEFINE0(ballooning)
++{
++
++    printk("Hello from ballooning.\n");
++    
++    // Prepare SIGBALLOON Signal 
++    sign_info.si_signo = SIGBALLOON;
++    sign_info.si_code = SI_QUEUE;
++    sign_info.si_int = 1;
++    
++    // Save Current Process
++    victim = current;
++
++    // Disable Swapping
++    //bool cgroup_memory_noswap =false;
++    if(cgroup_memory_noswap==false){
++	printk("Swapping is not disabled. Disabling swapping....\n");
++    	cgroup_memory_noswap = true;
++	printk("Swapping Disabled\n");
++    }
++    else{
++        printk("Swapping already disabled");
++    }
++ 
++    printk("Process with PID: %d registered for ballooning",victim->pid);
++  
++    return 0;
++}
++
++SYSCALL_DEFINE1(recieve_idle_pages, void *, voidptr)
++{
++	//Signal Response Recieved. Now can send another signal
++	signal_sent = 0;
++	return 0;
++	/*
++	// This approach not working :(
++	
++	struct idlePage *user_idle_pages = (struct idlePage *)voidptr;
++	printk("Recieved Idle Pages");
++	struct idlePage *ptr = user_idle_pages;
++	while(ptr !=NULL){
++		printk("Idle page: %05lx\n",ptr->pfn);
++		struct page * __idle_page = pfn_to_page(ptr->pfn);
++		printk("Page Ref Count %d\n",page_ref_count(__idle_page));
++		
++		list_del(&__idle_page->lru);
++		mem_cgroup_uncharge(__idle_page);
++		__free_pages(__idle_page,0);
++		//__put_page(__idle_page);
++		printk("Page Ref Count %d\n",page_ref_count(__idle_page));
++		ptr = ptr->next;
++	}
++	*/
++	//struct page *idle_page, *tmp;
++	
++	//list_for_each_entry_safe(page,tmp,user)
++	
++	//free_pages(user_idle_pages->pfn,0);
++	
++	return 0;
++
++}
++
++SYSCALL_DEFINE0(disable_ballooning)
++{
++	if(cgroup_memory_noswap==true){
++		cgroup_memory_noswap = false;
++		printk("Swapping Renabled\n");
++    	}
++    	else{
++        	printk("Swapping already enabled");
++    	}
++    	
++    	return 0;
++}
++
++
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index 7688bc983..c6b7bd490 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -1364,4 +1364,8 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
+ 		int __user *optlen);
+ int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
+ 		int optlen);
++asmlinkage long sys_ballooning(void);
++asmlinkage long sys_recieve_idle_pages(void *);
++asmlinkage long sys_disable_ballooning(void);
++
+ #endif
+-- 
+2.17.1
+
